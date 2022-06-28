@@ -1,6 +1,7 @@
 const readline = require("readline");
 const net = require("net");
 
+// <dev>
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -22,12 +23,16 @@ rl.on("line", (line) => {
 }).on("close", () => {
   process.exit();
 });
+// </dev>
 
-let clients = [];
-let roomMap = new Map();
+// <global_objects>
+const clients = [];
+const roomMap = new Map();
+const matchingQueue = [];
 let roomIdx = 0;
-let matchingQueue = [];
+// </global_objects>
 
+// <custom_errors>
 class MatchingError extends Error {
   constructor(message) {
     super(message);
@@ -55,10 +60,11 @@ class SocketNotInRoomError extends TargetError {
     this.name = "SocketNotInRoomError";
   }
 }
+// </custom_errors>
 
 const exceptionHandler = (e) => {
   console.error(e.name);
-  let errObj = { name: e.name, message: e.message };
+  let errObj = { result: "error", name: e.name, message: e.message };
   if (e instanceof SyntaxError) {
     // 보통 JSON파싱 익셉션
   }
@@ -155,6 +161,7 @@ const targetIgnoreWork = (client, data) => {
   }
 };
 
+// <io_functions>
 const getTarget = (client, data) => {
   let target = null;
   switch (data.Target) {
@@ -227,6 +234,7 @@ const writeData = function (socket, data) {
     })(socket, data);
   }
 };
+// </io_functions>
 
 const log = (data) => {
   let date = new Date();
@@ -255,7 +263,7 @@ const server = net.createServer((client) => {
     console.error("destroyed", e);
     console.log(client.id);
   });
-  // client.on("timeout", () => {});
+  // client.on("timeout", () => {}); //TODO: 타임아웃 활용?
   // client.setTimeout(10000);
   client.setEncoding("utf8");
   client.id = Symbol("id");
