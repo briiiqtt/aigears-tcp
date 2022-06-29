@@ -1,3 +1,4 @@
+const { Buffer } = require("buffer");
 const readline = require("readline");
 const net = require("net");
 
@@ -9,7 +10,10 @@ const getConnection = (connName) => {
     socket.setEncoding("utf8");
 
     socket.on("data", (data) => {
-      console.log(connName + " From Server: ", JSON.parse(data));
+      console.log(
+        connName + " From Server: ",
+        JSON.stringify(JSON.parse(data))
+      );
     });
     socket.on("end", (msg) => {
       console.log(connName + " Client disconnected: " + msg);
@@ -45,14 +49,34 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
+let header = Buffer.from([17, 0, 0, 0]);
+let body = Buffer.from('{"data":"hi"}');
+let body_piece1 = Buffer.from('{"data":"hi"');
+let body_piece2 = Buffer.from("}");
+
+// let buffer_a = Buffer.concat([header, body_piece1]);
+// let buffer_b = body_piece2;
+// let buffer_c = Buffer.concat([header, body]);
+// let buffer_d = Buffer.concat([header, body, header, body_piece1]);
+let buffer_e = Buffer.concat([header, body, header, body_piece1]);
+
 rl.on("line", (line) => {
   line = line.split(" ");
   switch (line[0]) {
-    case "0":
-      writeData(
-        socket,
-        '{"EventID":10040,"ClientID":"57c2416f36b34637abd4091f5792185c","Target":3,"data":{"error":0,"nick":"asdad","iconID":"RB_Playericon_005"}}'
-      );
+    case "header":
+      writeData(socket, header);
+      break;
+    case "body":
+      writeData(socket, body);
+      break;
+    case "1":
+      writeData(socket, body_piece1);
+      break;
+    case "2":
+      writeData(socket, body_piece2);
+      break;
+    case "00":
+      writeData(socket, buffer_e);
       break;
 
     case "-1":

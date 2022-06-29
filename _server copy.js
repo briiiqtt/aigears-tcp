@@ -92,6 +92,7 @@ const errorHandler = (e, EventID) => {
   console.error(e.name);
   if (e instanceof SyntaxError) {
     // 보통 JSON파싱 익셉션
+    return -100;
   }
   //  else if (e instanceof TypeError) {
   //   // 처리 해줘야하나 보류
@@ -342,10 +343,9 @@ const server = net.createServer((client) => {
   });
   // client.on("timeout", () => {}); //TODO: 타임아웃 활용?
   // client.setTimeout(10000);
-  // client.setEncoding("utf8");
+  client.setEncoding("utf8");
   client.id = Symbol("id");
   client.idx = clients.length;
-  client.tempBody = Buffer.alloc(0);
 
   console.log(`New Connection idx : ${client.idx}`);
 
@@ -377,86 +377,36 @@ const server = net.createServer((client) => {
   });
 
   client.on("data", (data) => {
-    let jsonStr = "";
+    if (client.cutStream) data = client.cutStream + data;
+    let target = null;
+    let stream = null;
+    try {
+      log(data);
+      data = JSON.parse(data);
 
-    for (let d of data) {
-      client.packetComplete = false;
-      client.tempBody = Buffer.concat([client.tempBody, Buffer.from([d])]);
-
-      if (client.tempBody.length === 4) {
-        client.header = client.tempBody;
-        client.packetLength = client.header.readUint32LE();
-        console.log(client.packetLength);
+      if (10000 <= data.EventID && data.EventID < 20000) {
+        target = false; // finally에서 send하지않기위해
+        targetIgnoreWork(client, data);
+      } else {
+        target = getTarget(client, data);
+        stream = data;
       }
+    } catch (e) {
+      stream = errorHandler(e, data.EventID);
+      target = client;
 
-      if (client.tempBody.length === client.packetLength) {
-        jsonStr = client.tempBody.toString();
-        client.tempBody = Buffer.alloc(0);
-        client.bodyLength = null;
-        client.packetComplete = true;
+      if (stream === -100) {
+        if (client.cutStream) client.cutStream += data;
+        else client.cutStream = data;
+        target = false;
+        return;
       }
-      if (client.packetComplete) console.log(jsonStr);
+    } finally {
+      if (target !== false) {
+        client.cutStream = null;
+      }
+      sendStreamTo(target, stream);
     }
-
-    /*
-    client.packetComplete = false;
-    let jsonStr = "";
-
-    if (client.tempBody.length === 0) {
-      let header = data.subarray(0, 4);
-      let body = data.subarray(4);
-
-      let packetLength = header.readUint32LE();
-      client.bodyLength = packetLength - header.length;
-
-      for (let b of body) {
-        client.packetComplete = false;
-        client.tempBody = Buffer.concat([client.tempBody, Buffer.from([b])]);
-        if (client.tempBody.length === client.bodyLength) {
-          jsonStr = client.tempBody.toString();
-          client.tempBody = Buffer.alloc(0);
-          client.bodyLength = null;
-          client.packetComplete = true;
-        }
-      }
-    } else {
-      for (let d of data) {
-        client.packetComplete = false;
-        client.tempBody = Buffer.concat([client.tempBody, Buffer.from([d])]);
-        if (client.tempBody.length === client.bodyLength) {
-          jsonStr = client.tempBody.toString();
-          client.tempBody = Buffer.alloc(0);
-          client.bodyLength = null;
-          client.packetComplete = true;
-        }
-      }
-    }
-    console.log(client.tempBody.length);
-
-    if (!client.packetComplete) return;
-    console.log(jsonStr);
-    // console.log(JSON.parse(jsonStr));
-    */
-
-    // let target = null;
-    // let stream = JSON.parse(jsonStr);
-    // try {
-    //   log(data);
-    //   data = JSON.parse(data);
-
-    //   if (10000 <= data.EventID && data.EventID < 20000) {
-    //     target = false; // finally에서 send하지않기위해
-    //     targetIgnoreWork(client, data);
-    //   } else {
-    //     target = getTarget(client, data);
-    //     stream = data;
-    //   }
-    // } catch (e) {
-    //   stream = errorHandler(e, data.EventID);
-    //   target = client;
-    // } finally {
-    //   sendStreamTo(target, stream);
-    // }
   });
 });
 
