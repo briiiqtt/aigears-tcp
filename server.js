@@ -378,7 +378,30 @@ const server = net.createServer((client) => {
 
   client.on("data", (data) => {
     let jsonStr = "";
-    let jsonStrCompleted = false;
+
+    for (let d of data) {
+      client.packetComplete = false;
+      client.tempBody = Buffer.concat([client.tempBody, Buffer.from([d])]);
+
+      if (client.tempBody.length === 4) {
+        client.header = client.tempBody;
+        client.packetLength = client.header.readUint32LE();
+        console.log(client.packetLength);
+      }
+
+      if (client.tempBody.length === client.packetLength) {
+        jsonStr = client.tempBody.toString();
+        client.tempBody = Buffer.alloc(0);
+        client.bodyLength = null;
+        client.packetComplete = true;
+      }
+      if (client.packetComplete) console.log(jsonStr);
+    }
+
+    /*
+    client.packetComplete = false;
+    let jsonStr = "";
+
     if (client.tempBody.length === 0) {
       let header = data.subarray(0, 4);
       let body = data.subarray(4);
@@ -387,27 +410,33 @@ const server = net.createServer((client) => {
       client.bodyLength = packetLength - header.length;
 
       for (let b of body) {
+        client.packetComplete = false;
         client.tempBody = Buffer.concat([client.tempBody, Buffer.from([b])]);
         if (client.tempBody.length === client.bodyLength) {
           jsonStr = client.tempBody.toString();
           client.tempBody = Buffer.alloc(0);
           client.bodyLength = null;
-          jsonStrCompleted = true;
+          client.packetComplete = true;
         }
       }
     } else {
       for (let d of data) {
+        client.packetComplete = false;
         client.tempBody = Buffer.concat([client.tempBody, Buffer.from([d])]);
         if (client.tempBody.length === client.bodyLength) {
           jsonStr = client.tempBody.toString();
           client.tempBody = Buffer.alloc(0);
           client.bodyLength = null;
-          jsonStrCompleted = true;
+          client.packetComplete = true;
         }
       }
     }
-    if (!jsonStrCompleted) return;
-    console.log(JSON.parse(jsonStr));
+    console.log(client.tempBody.length);
+
+    if (!client.packetComplete) return;
+    console.log(jsonStr);
+    // console.log(JSON.parse(jsonStr));
+    */
 
     // let target = null;
     // let stream = JSON.parse(jsonStr);

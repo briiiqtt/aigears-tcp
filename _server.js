@@ -377,8 +377,6 @@ const server = net.createServer((client) => {
   });
 
   client.on("data", (data) => {
-    let jsonStr = "";
-
     for (let d of data) {
       client.packetComplete = false;
       client.tempBody = Buffer.concat([client.tempBody, Buffer.from([d])]);
@@ -390,12 +388,20 @@ const server = net.createServer((client) => {
       }
 
       if (client.tempBody.length === client.packetLength) {
-        jsonStr = client.tempBody.toString();
+        client.jsonStr = client.tempBody.subarray(4).toString();
         client.tempBody = Buffer.alloc(0);
         client.bodyLength = null;
         client.packetComplete = true;
       }
-      if (client.packetComplete) console.log(jsonStr);
+
+      if (client.packetComplete) {
+        console.log(client.jsonStr.length);
+        try {
+          console.log(JSON.parse(client.jsonStr));
+        } catch (e) {
+          console.error(e);
+        }
+      }
     }
 
     /*
