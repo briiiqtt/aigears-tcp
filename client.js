@@ -2,18 +2,55 @@ const { Buffer } = require("buffer");
 const readline = require("readline");
 const net = require("net");
 
+let header = null;
+let tempBody = Buffer.alloc(0);
+let jsonStr = "";
+let packetComplete = false;
+let packetLength = null;
+
 const getConnection = (connName) => {
   let socket = net.connect({ port: 52532, host: "10.0.0.15" }, () => {
     console.log(connName + " Connected ");
 
     socket.setTimeout(5000);
-    socket.setEncoding("utf8");
+    // socket.setEncoding("utf8");
 
     socket.on("data", (data) => {
-      console.log(
-        connName + " From Server: ",
-        JSON.stringify(JSON.parse(data))
-      );
+      // console.log(
+      //   connName + " From Server: ",
+      //   // JSON.stringify(JSON.parse(data))
+      //   data
+      // );
+      try {
+        for (let d of data) {
+          packetComplete = false;
+          tempBody = Buffer.concat([tempBody, Buffer.from([d])]);
+
+          if (tempBody.length === 4) {
+            for (let t of tempBody) {
+              console.log(t);
+            }
+            header = tempBody;
+            packetLength = header.readUint32LE();
+            console.log("packetLength", packetLength);
+          }
+
+          if (tempBody.length === packetLength) {
+            jsonStr = tempBody.subarray(4).toString();
+            tempBody = Buffer.alloc(0);
+            packetComplete = true;
+          }
+
+          if (packetComplete) {
+            let body = JSON.parse(jsonStr);
+            console.log(body);
+            // console.log(jsonStr);
+            // console.log("jsonStr.length", jsonStr.length);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
     });
     socket.on("end", (msg) => {
       console.log(connName + " Client disconnected: " + msg);
@@ -49,44 +86,13 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
-let header = Buffer.from([17, 0, 0, 0]);
-let body = Buffer.from('{"data":"hi"}');
-let body_piece1 = Buffer.from('{"data":"hi"');
-let body_piece2 = Buffer.from("}");
-
-// let buffer_a = Buffer.concat([header, body_piece1]);
-// let buffer_b = body_piece2;
-// let buffer_c = Buffer.concat([header, body]);
-// let buffer_d = Buffer.concat([header, body, header, body_piece1]);
-let buffer_e = Buffer.concat([header, body, header, body_piece1]);
-
 rl.on("line", (line) => {
   line = line.split(" ");
   switch (line[0]) {
-    case "header":
-      writeData(socket, header);
-      break;
-    case "body":
-      writeData(socket, body);
-      break;
-    case "1":
-      writeData(socket, body_piece1);
-      break;
-    case "2":
-      writeData(socket, body_piece2);
-      break;
-    case "00":
-      writeData(socket, buffer_e);
-      break;
-
-    case "-1":
-      writeData(socket, '{"');
-      break;
-
     case "1":
       writeData(
         socket,
-        JSON.stringify({
+        makePacket({
           EventID: parseInt(line[1]),
           ClientID: "clientid",
           Target: parseInt(line[2]),
@@ -94,15 +100,26 @@ rl.on("line", (line) => {
         })
       );
       break;
-
     case "2":
-      socket.destroy();
-      break;
-
-    case "3":
-      socket.end();
+      writeData(
+        socket,
+        makePacket({
+          EventID: 10040,
+          ClientID: "clientid",
+          Target: 0,
+          data: { iconID: line[1], nick: line[2] },
+        })
+      );
       break;
   }
 }).on("close", () => {
   process.exit();
 });
+
+const makePacket = (obj) => {
+  let json = JSON.stringify(obj);
+  let header = Buffer.from([json.length + 4, 0, 0, 0]);
+  let body = Buffer.from(json);
+
+  return Buffer.concat([header, body]);
+};

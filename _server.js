@@ -45,14 +45,14 @@ let roomIdx = 0;
 // }
 
 // <custom_errors>
-class aigearsError extends Error {
+class AigearsError extends Error {
   constructor(message) {
     super(message);
     this.error = -1;
   }
 }
 
-class MatchingError extends aigearsError {
+class MatchingError extends AigearsError {
   constructor(message) {
     super(message);
     this.name = "MatchingError";
@@ -73,7 +73,7 @@ class SocketAlreadyInMatchingQueueError extends MatchingError {
   }
 }
 
-class TargetError extends aigearsError {
+class TargetError extends AigearsError {
   constructor(message) {
     super(message);
     this.name = "TargetError";
@@ -91,14 +91,8 @@ class SocketNotInRoomError extends TargetError {
 const errorHandler = (e, EventID) => {
   console.error(e.name);
   if (e instanceof SyntaxError) {
-    // 보통 JSON파싱 익셉션
-  }
-  //  else if (e instanceof TypeError) {
-  //   // 처리 해줘야하나 보류
-  // }
-  else if (e instanceof TargetError) {
     //
-  } else if (e instanceof MatchingError) {
+  } else if (e instanceof AigearsError) {
     //
   } else {
     console.error(e);
@@ -106,7 +100,7 @@ const errorHandler = (e, EventID) => {
   }
   let stream = {
     EventID,
-    data: { error: e.error, name: e.name, message: e.message },
+    data: { error: -1, name: e.name, message: e.message },
   };
   return stream;
 };
@@ -114,7 +108,7 @@ const errorHandler = (e, EventID) => {
 const matchMaker = {
   makeMatch: (client) => {
     return new Promise((resolve, reject) => {
-      client.resolve = resolve;
+      client.matchFound = resolve;
       if (matchingQueue.includes(client)) {
         reject(new SocketAlreadyInMatchingQueueError());
         return;
@@ -140,8 +134,8 @@ const matchMaker = {
     player2.playerNum = 2;
     player1.roomIdx = roomIdx;
     player2.roomIdx = roomIdx;
-    player1.resolve();
-    player2.resolve();
+    player1.matchFound();
+    player2.matchFound();
     roomIdx++;
   },
   getRandomIdx: () => {
@@ -166,9 +160,13 @@ const targetIgnoreWork = (client, data) => {
         try {
           await matchMaker.makeMatch(client);
         } catch (e) {
-          let stream = errorHandler(e, data.EventID);
-          sendStreamTo(client, stream);
-          return;
+          if (e instanceof SocketAlreadyInMatchingQueueError) {
+            let stream = errorHandler(e, data.EventID);
+            sendStreamTo(client, stream);
+            return;
+          } else {
+            throw e;
+          }
         }
         let isPlayer1 = client.playerNum === 1;
         let player1 = roomMap.get(client.roomIdx).player1;
@@ -207,38 +205,64 @@ const targetIgnoreWork = (client, data) => {
       break;
 
     case 10050: // 방 탈출
-      if (client.roomIdx === null || client.roomIdx === undefined) {
-        throw new SocketNotInRoomError();
-      } else {
-        let player1 = roomMap.get(client.roomIdx).player1;
-        let player2 = roomMap.get(client.roomIdx).player2;
-
-        let otherPlayer = client.id === player1.id ? player2 : player1;
-
-        sendStreamTo(client, {
-          EventID: 20051,
-          data: {
-            error: 0,
-            message: "자신이 방을 떠남",
-          },
-        });
-        sendStreamTo(otherPlayer, {
-          EventID: 20052,
-          data: {
-            error: 0,
-            message: "상대가 방을 떠남",
-          },
-        });
-
-        roomMap.delete(client.roomIdx);
-        client.roomIdx = null;
-      }
+      leaveRoom(client, (notShuttingDown = true));
 
     default:
   }
 };
 
 // <io_functions>
+const numberToUInt32Array = (num) => {
+  num = num + 4;
+  let arr = [0, 0, 0, 0];
+  for (let i = 1; i <= num; i++) {
+    arr[0]++;
+    if (arr[0] > 255) {
+      arr[0] = 0;
+      arr[1]++;
+    }
+    if (arr[1] > 255) {
+      arr[1] = 0;
+      arr[2]++;
+    }
+    if (arr[2] > 255) {
+      arr[2] = 0;
+      arr[3]++;
+    }
+    if (arr[3] > 255) throw new Error();
+  }
+  return arr;
+};
+const leaveRoom = (client, notShuttingDown) => {
+  if (client.roomIdx === null || client.roomIdx === undefined) {
+    if (notShuttingDown) throw new SocketNotInRoomError();
+  } else {
+    if (roomMap.get(client.roomIdx) === undefined) return;
+
+    let player1 = roomMap.get(client.roomIdx).player1;
+    let player2 = roomMap.get(client.roomIdx).player2;
+
+    let otherPlayer = client.id === player1.id ? player2 : player1;
+
+    sendStreamTo(client, {
+      EventID: 20051,
+      data: {
+        error: 0,
+        message: "자신이 방을 떠남",
+      },
+    });
+    sendStreamTo(otherPlayer, {
+      EventID: 20052,
+      data: {
+        error: 0,
+        message: "상대가 방을 떠남",
+      },
+    });
+
+    roomMap.delete(client.roomIdx);
+    client.roomIdx = null;
+  }
+};
 const getTarget = (client, data) => {
   let target = null;
   switch (data.Target) {
@@ -295,20 +319,26 @@ const sendStreamTo = (target, data) => {
   }
 };
 const writeData = function (socket, data) {
+  let header = null;
+  let packet = null;
   try {
     if (socket.destroyed) return;
     data = JSON.stringify(data);
+    data = Buffer.from(data);
+    header = Buffer.from(numberToUInt32Array(data.length));
+    packet = Buffer.concat([header, data]);
   } catch (e) {
     errorHandler(e);
     return;
   }
-  let success = !socket.write(data);
+  // console.log(packet.length);
+  let success = !socket.write(packet);
   if (!success) {
-    ((socket, data) => {
+    ((socket, packet) => {
       socket.once("drain", () => {
-        writeData(socket, data);
+        writeData(socket, packet);
       });
-    })(socket, data);
+    })(socket, packet);
   }
 };
 // </io_functions>
@@ -347,122 +377,72 @@ const server = net.createServer((client) => {
   client.idx = clients.length;
   client.tempBody = Buffer.alloc(0);
 
-  console.log(`New Connection idx : ${client.idx}`);
+  console.log("New Connection idx : ", client.idx);
 
   clients.push(client);
 
   client.on("close", () => {
-    /**
-     *
-     *
-     *
-     *
-     *
-     *
-     *
-     *
-     */
-    // if(client.) 클라 강제종료 처리
-    let logStr = "";
-    for (let i in clients) {
-      if (clients[i].id === client.id) {
-        logStr += `clients[i].idx: ${clients[i].idx}`;
-        clients.splice(i, 1);
+    try {
+      if (client.roomIdx !== null || client.roomIdx !== undefined)
+        leaveRoom(client, (notShuttingDown = false));
+
+      let logStr = "";
+      for (let i in clients) {
+        if (clients[i].id === client.id) {
+          logStr += `clients[i].idx: ${clients[i].idx}`;
+          clients.splice(i, 1);
+        }
       }
+      server.getConnections((e, count) => {
+        logStr += `, clients[].length: ${clients.length}, server.getConnections(): ${count}`;
+        console.log(logStr);
+      });
+    } catch (e) {
+      errorHandler(e);
     }
-    server.getConnections((e, count) => {
-      logStr += `, clients[].length: ${clients.length}, server.getConnections(): ${count}`;
-      console.log(logStr);
-    });
   });
 
   client.on("data", (data) => {
-    for (let d of data) {
-      client.packetComplete = false;
-      client.tempBody = Buffer.concat([client.tempBody, Buffer.from([d])]);
-
-      if (client.tempBody.length === 4) {
-        client.header = client.tempBody;
-        client.packetLength = client.header.readUint32LE();
-        console.log(client.packetLength);
-      }
-
-      if (client.tempBody.length === client.packetLength) {
-        client.jsonStr = client.tempBody.subarray(4).toString();
-        client.tempBody = Buffer.alloc(0);
-        client.bodyLength = null;
-        client.packetComplete = true;
-      }
-
-      if (client.packetComplete) {
-        console.log(client.jsonStr.length);
-        try {
-          console.log(JSON.parse(client.jsonStr));
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-
-    /*
-    client.packetComplete = false;
-    let jsonStr = "";
-
-    if (client.tempBody.length === 0) {
-      let header = data.subarray(0, 4);
-      let body = data.subarray(4);
-
-      let packetLength = header.readUint32LE();
-      client.bodyLength = packetLength - header.length;
-
-      for (let b of body) {
-        client.packetComplete = false;
-        client.tempBody = Buffer.concat([client.tempBody, Buffer.from([b])]);
-        if (client.tempBody.length === client.bodyLength) {
-          jsonStr = client.tempBody.toString();
-          client.tempBody = Buffer.alloc(0);
-          client.bodyLength = null;
-          client.packetComplete = true;
-        }
-      }
-    } else {
+    // log(data.toString());
+    let target = false;
+    let stream = null;
+    try {
       for (let d of data) {
         client.packetComplete = false;
         client.tempBody = Buffer.concat([client.tempBody, Buffer.from([d])]);
-        if (client.tempBody.length === client.bodyLength) {
-          jsonStr = client.tempBody.toString();
+
+        if (client.tempBody.length === 4) {
+          client.header = client.tempBody;
+          client.packetLength = client.header.readUint32LE();
+          // console.log(client.packetLength);
+        }
+
+        if (client.tempBody.length === client.packetLength) {
+          client.jsonStr = client.tempBody.subarray(4).toString();
           client.tempBody = Buffer.alloc(0);
           client.bodyLength = null;
           client.packetComplete = true;
         }
+
+        if (client.packetComplete) {
+          let body = JSON.parse(client.jsonStr);
+          log(body);
+
+          if (10000 <= body.EventID && body.EventID < 20000) {
+            // target = false; // finally에서 send하지않기위해
+            targetIgnoreWork(client, body);
+          } else {
+            target = getTarget(client, body);
+            stream = body;
+          }
+        }
       }
+    } catch (e) {
+      stream = errorHandler(e, data.EventID);
+      target = client;
+    } finally {
+      sendStreamTo(target, stream);
     }
-    console.log(client.tempBody.length);
-
-    if (!client.packetComplete) return;
-    console.log(jsonStr);
-    // console.log(JSON.parse(jsonStr));
-    */
-
-    // let target = null;
-    // let stream = JSON.parse(jsonStr);
-    // try {
-    //   log(data);
-    //   data = JSON.parse(data);
-
-    //   if (10000 <= data.EventID && data.EventID < 20000) {
-    //     target = false; // finally에서 send하지않기위해
-    //     targetIgnoreWork(client, data);
-    //   } else {
-    //     target = getTarget(client, data);
-    //     stream = data;
-    //   }
-    // } catch (e) {
-    //   stream = errorHandler(e, data.EventID);
-    //   target = client;
-    // } finally {
-    //   sendStreamTo(target, stream);
-    // }
   });
 });
 
