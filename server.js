@@ -285,10 +285,11 @@ const getTarget = (client, data) => {
     case 2: //방 안 나빼고 모두
       if (client.roomIdx === undefined || client.roomIdx === null)
         throw new SocketNotInRoomError();
-      target =
-        client.id === roomMap.get(client.roomIdx).player1.id
-          ? roomMap.get(client.roomIdx).player2
-          : roomMap.get(client.roomIdx).player1;
+      if (roomMap.get(client.roomIdx) !== undefined)
+        target = roomMap.get(client.roomIdx);
+      client.id === roomMap.get(client.roomIdx).player1.id
+        ? roomMap.get(client.roomIdx).player2
+        : roomMap.get(client.roomIdx).player1;
       break;
 
     case 3: //모두
