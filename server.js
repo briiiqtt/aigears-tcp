@@ -92,17 +92,20 @@ const errorHandler = (e, EventID) => {
   console.error(e.name);
   if (e instanceof SyntaxError) {
     //
+  } else if (e instanceof TypeError) {
+    console.error(e);
+    //
   } else if (e instanceof AigearsError) {
     //
   } else {
     console.error(e);
     throw e;
   }
-  let stream = {
+  let packet = {
     EventID,
     data: { error: -1, name: e.name, message: e.message },
   };
-  return stream;
+  return packet;
 };
 
 const matchMaker = {
@@ -148,7 +151,7 @@ const targetIgnoreWork = (client, data) => {
     case 10040: //매칭 큐 진입
       client.nick = data.data.nick;
       client.iconID = data.data.iconID;
-      sendStreamTo(client, {
+      sendPacketTo(client, {
         EventID: 20040,
         data: {
           error: 0,
@@ -161,8 +164,8 @@ const targetIgnoreWork = (client, data) => {
           await matchMaker.makeMatch(client);
         } catch (e) {
           if (e instanceof SocketAlreadyInMatchingQueueError) {
-            let stream = errorHandler(e, data.EventID);
-            sendStreamTo(client, stream);
+            let packet = errorHandler(e, data.EventID);
+            sendPacketTo(client, packet);
             return;
           } else {
             throw e;
@@ -172,7 +175,7 @@ const targetIgnoreWork = (client, data) => {
         let player1 = roomMap.get(client.roomIdx).player1;
         let player2 = roomMap.get(client.roomIdx).player2;
 
-        sendStreamTo(client, {
+        sendPacketTo(client, {
           EventID: 20041,
           data: {
             error: 0,
@@ -192,7 +195,7 @@ const targetIgnoreWork = (client, data) => {
       for (let i in matchingQueue) {
         if (client.id === matchingQueue[i].id) {
           matchingQueue.splice(i, 1);
-          sendStreamTo(client, {
+          sendPacketTo(client, {
             EventID: 20042,
             data: {
               error: 0,
@@ -244,14 +247,14 @@ const leaveRoom = (client, notShuttingDown) => {
 
     let otherPlayer = client.id === player1.id ? player2 : player1;
 
-    sendStreamTo(client, {
+    sendPacketTo(client, {
       EventID: 20051,
       data: {
         error: 0,
         message: "자신이 방을 떠남",
       },
     });
-    sendStreamTo(otherPlayer, {
+    sendPacketTo(otherPlayer, {
       EventID: 20052,
       data: {
         error: 0,
@@ -285,11 +288,10 @@ const getTarget = (client, data) => {
     case 2: //방 안 나빼고 모두
       if (client.roomIdx === undefined || client.roomIdx === null)
         throw new SocketNotInRoomError();
-      if (roomMap.get(client.roomIdx) !== undefined)
-        target = roomMap.get(client.roomIdx);
-      client.id === roomMap.get(client.roomIdx).player1.id
-        ? roomMap.get(client.roomIdx).player2
-        : roomMap.get(client.roomIdx).player1;
+      target =
+        client.id === roomMap.get(client.roomIdx).player1.id
+          ? roomMap.get(client.roomIdx).player2
+          : roomMap.get(client.roomIdx).player1;
       break;
 
     case 3: //모두
@@ -309,7 +311,7 @@ const getTarget = (client, data) => {
 
   return target;
 };
-const sendStreamTo = (target, data) => {
+const sendPacketTo = (target, data) => {
   if (target === false) return;
   if (Array.isArray(target)) {
     for (let t of target) {
@@ -328,18 +330,21 @@ const writeData = function (socket, data) {
     data = Buffer.from(data);
     header = Buffer.from(numberToUInt32Array(data.length));
     packet = Buffer.concat([header, data]);
+
+    // console.log(packet.length);
+    let success = !socket.write(packet);
+    if (!success) {
+      ((socket, packet) => {
+        socket.once("drain", () => {
+          writeData(socket, packet);
+        });
+      })(socket, packet);
+    }
   } catch (e) {
+    console.log("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", socket);
+
     errorHandler(e);
     return;
-  }
-  // console.log(packet.length);
-  let success = !socket.write(packet);
-  if (!success) {
-    ((socket, packet) => {
-      socket.once("drain", () => {
-        writeData(socket, packet);
-      });
-    })(socket, packet);
   }
 };
 // </io_functions>
@@ -406,7 +411,7 @@ const server = net.createServer((client) => {
   client.on("data", (data) => {
     // log(data.toString());
     let target = false;
-    let stream = null;
+    let packet = null;
     try {
       for (let d of data) {
         client.packetComplete = false;
@@ -434,15 +439,15 @@ const server = net.createServer((client) => {
             targetIgnoreWork(client, body);
           } else {
             target = getTarget(client, body);
-            stream = body;
+            packet = body;
           }
         }
       }
     } catch (e) {
-      stream = errorHandler(e, data.EventID);
+      packet = errorHandler(e, data.EventID);
       target = client;
     } finally {
-      sendStreamTo(target, stream);
+      sendPacketTo(target, packet);
     }
   });
 });

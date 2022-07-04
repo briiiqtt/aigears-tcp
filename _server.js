@@ -92,6 +92,9 @@ const errorHandler = (e, EventID) => {
   console.error(e.name);
   if (e instanceof SyntaxError) {
     //
+  } else if (e instanceof TypeError) {
+    console.error(e);
+    //
   } else if (e instanceof AigearsError) {
     //
   } else {
@@ -327,18 +330,21 @@ const writeData = function (socket, data) {
     data = Buffer.from(data);
     header = Buffer.from(numberToUInt32Array(data.length));
     packet = Buffer.concat([header, data]);
+
+    // console.log(packet.length);
+    let success = !socket.write(packet);
+    if (!success) {
+      ((socket, packet) => {
+        socket.once("drain", () => {
+          writeData(socket, packet);
+        });
+      })(socket, packet);
+    }
   } catch (e) {
+    console.log("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", socket);
+
     errorHandler(e);
     return;
-  }
-  // console.log(packet.length);
-  let success = !socket.write(packet);
-  if (!success) {
-    ((socket, packet) => {
-      socket.once("drain", () => {
-        writeData(socket, packet);
-      });
-    })(socket, packet);
   }
 };
 // </io_functions>
